@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>API_KEY</key>
-	<string>AIzaSyAm8Sq04GDexebR9mAaGvqJX8gYqDDVQ38</string>
+	<string></string>
 	<key>GCM_SENDER_ID</key>
 	<string>638331742728</string>
 	<key>PLIST_VERSION</key>
@@ -15,15 +15,15 @@
 	<key>STORAGE_BUCKET</key>
 	<string>koungafamilychorerewards.firebasestorage.app</string>
 	<key>IS_ADS_ENABLED</key>
-	<false></false>
+	<false/>
 	<key>IS_ANALYTICS_ENABLED</key>
-	<false></false>
+	<false/>
 	<key>IS_APPINVITE_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>IS_GCM_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>IS_SIGNIN_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>GOOGLE_APP_ID</key>
 	<string>1:638331742728:ios:b826928b4545c374acbfbd</string>
 </dict>
