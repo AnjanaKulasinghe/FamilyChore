@@ -3,6 +3,22 @@ import FirebaseCore // For FirebaseApp.configure()
 import FirebaseAuth
 import FirebaseFirestore
 import FirebaseStorage
+import UIKit // Needed for UIImage
+
+// Custom Error for Co-Parent Linking Issues
+enum FindParentError: Error, LocalizedError {
+    case alreadyInFamily(email: String, familyId: String)
+    // Add other specific cases if needed
+
+    var errorDescription: String? {
+        switch self {
+        case .alreadyInFamily(let email, let familyId):
+            // Provide a user-friendly message
+            return "Parent with email \(email) already belongs to a family."
+            // Alternative: "This parent account is already linked to a family."
+        }
+    }
+}
 
 /// A singleton class to manage all interactions with Firebase services (Auth, Firestore, Storage).
 class FirebaseService {
@@ -171,7 +187,7 @@ class FirebaseService {
         childProfile.id = childUserId // Ensure the returned profile has the ID
         return childProfile
     }
-
+    
     /// Updates an existing UserProfile document in Firestore.
     /// - Parameter userProfile: The UserProfile object with updated data. Must have a valid ID.
     /// - Throws: An error if the user profile ID is missing or the Firestore operation fails.
@@ -180,12 +196,12 @@ class FirebaseService {
             print("Error: UserProfile ID is missing for update.")
             throw NSError(domain: "FirebaseServiceError", code: 500, userInfo: [NSLocalizedDescriptionKey: "UserProfile ID missing for update."])
         }
-
+        
         // Use setData(from:merge:true) to update existing fields without overwriting the whole document
         try await db.collection("users").document(userId).setData(from: userProfile, merge: true)
         print("Successfully updated UserProfile for user: \(userId)")
     }
-
+    
     /// Removes a child's UserProfile document from Firestore and removes their ID from the family document.
     /// NOTE: This does NOT delete the Firebase Authentication user. Deleting Auth users should be done from a secure backend.
     /// - Parameters:
@@ -193,18 +209,97 @@ class FirebaseService {
     ///   - familyId: The ID of the family the child belongs to.
     /// - Throws: An error if any Firestore operation fails.
     func removeChildAccount(childId: String, fromFamily familyId: String) async throws {
-        // 1. Delete the child's UserProfile document
-        try await db.collection("users").document(childId).delete()
-        print("Successfully deleted UserProfile document for child: \(childId)")
-
-        // 2. Remove the child's ID from the Family document
+        
+        // Use a batched write for atomic updates where possible
+        let batch = db.batch()
+        
+        // 1. Find Tasks assigned to the child and remove them from the assignment list
+        let tasksQuery = db.collection("tasks").whereField("assignedChildIds", arrayContains: childId)
+        let tasksSnapshot = try await tasksQuery.getDocuments()
+        
+        for document in tasksSnapshot.documents {
+            let taskRef = db.collection("tasks").document(document.documentID)
+            batch.updateData(["assignedChildIds": FieldValue.arrayRemove([childId])], forDocument: taskRef)
+            print("Scheduled removal of child \(childId) from task \(document.documentID)")
+        }
+        
+        // 2. Find Rewards assigned to the child and remove them from the assignment list
+        let rewardsQuery = db.collection("rewards").whereField("assignedChildIds", arrayContains: childId)
+        let rewardsSnapshot = try await rewardsQuery.getDocuments()
+        
+        for document in rewardsSnapshot.documents {
+            let rewardRef = db.collection("rewards").document(document.documentID)
+            batch.updateData(["assignedChildIds": FieldValue.arrayRemove([childId])], forDocument: rewardRef)
+            print("Scheduled removal of child \(childId) from reward \(document.documentID)")
+        }
+        
+        // 3. Schedule deletion of the child's UserProfile document
+        let userRef = db.collection("users").document(childId)
+        batch.deleteDocument(userRef)
+        print("Scheduled deletion of UserProfile document for child: \(childId)")
+        
+        // 4. Schedule removal of the child's ID from the Family document
+        let familyRef = db.collection("families").document(familyId)
+        batch.updateData(["childIds": FieldValue.arrayRemove([childId])], forDocument: familyRef)
+        print("Scheduled removal of child \(childId) from family \(familyId)")
+        
+        // 5. Commit the batch
+        try await batch.commit()
+        print("Successfully committed batch removal for child \(childId)")
+        
+        // NOTE: Still doesn't delete the Auth user.
+    }
+    
+    /// Finds a UserProfile document for a parent user based on their email address.
+    /// Only returns a profile if the user has the 'parent' role.
+    /// Further validation (like checking familyId) should happen in the ViewModel.
+    /// - Parameter email: The email address to search for.
+    /// - Returns: The UserProfile object if found and eligible (parent role, not in a family).
+    /// - Throws: `FindParentError.alreadyInFamily` if found but ineligible, or other Firestore errors.
+    func findParentByEmail(email: String) async throws -> UserProfile? {
+        let querySnapshot = try await db.collection("users")
+            .whereField("email", isEqualTo: email)
+            .whereField("role", isEqualTo: UserRole.parent.rawValue)
+            .limit(to: 1)
+            .getDocuments()
+        
+        guard let document = querySnapshot.documents.first else {
+            return nil // Not found or not a parent
+        }
+        
+        let userProfile = try document.data(as: UserProfile.self)
+        
+        // Removed check for existing familyId - Allow linking parents already in a family
+        // Note: This requires handling multi-family logic elsewhere in the app later.
+        
+        // Found and is a parent
+        return userProfile
+    }
+    
+    /// Adds an existing parent user to a specified family.
+    /// Updates both the Family document and the parent's UserProfile document.
+    /// - Parameters:
+    ///   - parentToAddId: The ID of the parent user to add.
+    ///   - familyId: The ID of the family to add the parent to.
+    /// - Throws: An error if any Firestore operation fails.
+    func addParentToFamily(parentToAddId: String, familyId: String) async throws {
+        // 1. Update the Family document to include the new parent's ID
         let familyRef = db.collection("families").document(familyId)
         try await familyRef.updateData([
-            "childIds": FieldValue.arrayRemove([childId])
+            "parentIds": FieldValue.arrayUnion([parentToAddId])
         ])
-        print("Successfully removed child \(childId) from family \(familyId)")
+        print("Successfully added parent \(parentToAddId) to family \(familyId)")
+        
+        // 2. Update the co-parent's UserProfile document to set their familyId
+        // Note: Consider security implications and Cloud Functions for production.
+        let userRef = db.collection("users").document(parentToAddId)
+        try await userRef.updateData([
+            "familyId": familyId
+        ])
+        print("Successfully updated familyId for parent \(parentToAddId)")
     }
-
+    
+    
     // MARK: - Firestore Operations (Phase 2 & 6)
     
     /// Fetches a Family document from Firestore based on its ID.
@@ -245,6 +340,25 @@ class FirebaseService {
         return children
     }
     
+    /// Fetches the UserProfile documents for all parents in a given family.
+    /// - Parameter familyId: The ID of the family.
+    /// - Returns: An array of UserProfile objects for the parents in the family.
+    /// - Throws: An error if the Firestore query fails or documents cannot be decoded.
+    func fetchParents(forFamily familyId: String) async throws -> [UserProfile] {
+        let querySnapshot = try await db.collection("users")
+            .whereField("familyId", isEqualTo: familyId)
+            .whereField("role", isEqualTo: UserRole.parent.rawValue) // Filter by parent role
+            .getDocuments()
+        
+        // Use compactMap to attempt decoding each document and discard failures
+        let parents = querySnapshot.documents.compactMap { document in
+            try? document.data(as: UserProfile.self)
+        }
+        
+        print("Successfully fetched \(parents.count) parents for family \(familyId)")
+        return parents
+    }
+    
     /// Fetches Task documents from Firestore assigned to a specific child.
     /// - Parameter childId: The ID of the child.
     /// - Returns: An array of Task objects assigned to the child.
@@ -261,7 +375,7 @@ class FirebaseService {
         print("Successfully fetched \(tasks.count) tasks for child \(childId)")
         return tasks
     }
-
+    
     /// Fetches Task documents from Firestore for a given family.
     /// - Parameter familyId: The ID of the family.
     /// - Returns: An array of Task objects for the specified family.
@@ -274,26 +388,48 @@ class FirebaseService {
         // This requires knowing the parent's ID. A better approach might be needed.
         // Let's fetch ALL tasks for now and filter later, or adjust the data model.
         // A more scalable approach would be to query based on assignedChildIds belonging to the family.
-
+        
         // Fetching all tasks (less efficient, consider refining based on actual needs)
         // We need a way to link tasks to a family. Let's assume tasks have a 'familyId' field for this example.
         // If 'familyId' is not on tasks, this query needs adjustment.
         let querySnapshot = try await db.collection("tasks")
             .whereField("familyId", isEqualTo: familyId) // ASSUMING tasks have familyId
             .getDocuments()
-
+        
         let tasks = querySnapshot.documents.compactMap { document in
             try? document.data(as: ChildTask.self)
         }
-
+        
         print("Successfully fetched \(tasks.count) tasks for family \(familyId)")
         return tasks
     }
-
+    
     /// Fetches Reward documents from Firestore assigned to a specific child.
     /// - Parameter childId: The ID of the child.
     /// - Returns: An array of Reward objects assigned to the child.
     /// - Throws: An error if the Firestore query fails or documents cannot be decoded.
+    /// Helper function to automatically assign linked rewards to children assigned to a task.
+    /// Adds updates to the provided WriteBatch. Does not commit the batch.
+    /// - Parameters:
+    ///   - task: The task being created or updated.
+    ///   - batch: The Firestore WriteBatch to add updates to.
+    private func _autoAssignRewardsForTask(task: ChildTask, batch: WriteBatch) {
+        guard !task.linkedRewardIds.isEmpty, !task.assignedChildIds.isEmpty else {
+            // No linked rewards or no assigned children, nothing to do.
+            return
+        }
+        
+        print("Checking reward assignments for task: \(task.id ?? "new")")
+        // For each reward linked to the task...
+        for rewardId in task.linkedRewardIds {
+            let rewardRef = db.collection("rewards").document(rewardId)
+            // ...schedule an update to ensure all children assigned to the task
+            // are also added to the reward's assigned list.
+            // arrayUnion prevents duplicates if they are already assigned.
+            batch.updateData(["assignedChildIds": FieldValue.arrayUnion(task.assignedChildIds)], forDocument: rewardRef)
+            print("Scheduled update for reward \(rewardId) to ensure children \(task.assignedChildIds) are assigned.")
+        }
+    }
     func fetchRewards(forChild childId: String) async throws -> [Reward] {
         let querySnapshot = try await db.collection("rewards")
             .whereField("assignedChildIds", arrayContains: childId)
@@ -306,7 +442,7 @@ class FirebaseService {
         print("Successfully fetched \(rewards.count) rewards for child \(childId)")
         return rewards
     }
-
+    
     /// Fetches all Reward documents from Firestore for a given family.
     /// - Parameter familyId: The ID of the family.
     /// - Returns: An array of Reward objects for the specified family.
@@ -315,22 +451,36 @@ class FirebaseService {
         let querySnapshot = try await db.collection("rewards")
             .whereField("familyId", isEqualTo: familyId)
             .getDocuments()
-
+        
         let rewards = querySnapshot.documents.compactMap { document in
             try? document.data(as: Reward.self)
         }
-
+        
         print("Successfully fetched \(rewards.count) rewards for family \(familyId)")
         return rewards
     }
-
+    
     /// Creates a new Task document in Firestore.
     /// - Parameter task: The Task object to create.
     /// - Throws: An error if the Firestore operation fails.
     func createTask(_ task: ChildTask) async throws {
-        // Firestore will automatically generate a document ID
-        _ = try await db.collection("tasks").addDocument(from: task)
-        print("Successfully created task: \(task.title)")
+        let batch = db.batch()
+        
+        // 1. Create the new task document reference (Firestore generates ID)
+        let newTaskRef = db.collection("tasks").document()
+        // Set the task data in the batch
+        try batch.setData(from: task, forDocument: newTaskRef)
+        print("Scheduled creation for task: \(task.title)")
+        
+        // 2. Schedule reward assignments if needed
+        // Create a temporary task copy with the generated ID for the helper
+        var taskWithId = task
+        taskWithId.id = newTaskRef.documentID
+        _autoAssignRewardsForTask(task: taskWithId, batch: batch)
+        
+        // 3. Commit the batch
+        try await batch.commit()
+        print("Successfully committed batch for creating task: \(task.title)")
     }
     
     /// Creates a new Reward document in Firestore.
@@ -351,11 +501,21 @@ class FirebaseService {
             throw NSError(domain: "FirebaseServiceError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Task ID missing for update."])
         }
         
-        // Use setData(from:merge:true) to update existing fields without overwriting the whole document
-        try await db.collection("tasks").document(taskId).setData(from: task, merge: true)
+        let batch = db.batch()
+        let taskRef = db.collection("tasks").document(taskId)
+        
+        // 1. Schedule task update (merge ensures we only update fields present in the model)
+        try batch.setData(from: task, forDocument: taskRef, merge: true)
+        print("Scheduled update for task: \(task.title) (\(taskId))")
+        
+        // 2. Schedule reward assignments if needed
+        _autoAssignRewardsForTask(task: task, batch: batch)
+        
+        // 3. Commit the batch
+        try await batch.commit()
         print("Successfully updated task: \(task.title) (\(taskId))")
     }
-
+    
     /// Deletes a Task document from Firestore.
     /// - Parameter taskId: The ID of the task to delete.
     /// - Throws: An error if the Firestore operation fails.
@@ -363,7 +523,7 @@ class FirebaseService {
         try await db.collection("tasks").document(taskId).delete()
         print("Successfully deleted task with ID: \(taskId)")
     }
-
+    
     /// Updates an existing Reward document in Firestore.
     /// - Parameter reward: The Reward object with updated data. Must have a valid ID.
     /// - Throws: An error if the reward ID is missing or the Firestore operation fails.
@@ -377,7 +537,7 @@ class FirebaseService {
         try await db.collection("rewards").document(rewardId).setData(from: reward, merge: true)
         print("Successfully updated reward: \(reward.title) (\(rewardId))")
     }
-
+    
     /// Deletes a Reward document from Firestore.
     /// - Parameter rewardId: The ID of the reward to delete.
     /// - Throws: An error if the Firestore operation fails.
@@ -385,7 +545,7 @@ class FirebaseService {
         try await db.collection("rewards").document(rewardId).delete()
         print("Successfully deleted reward with ID: \(rewardId)")
     }
-
+    
     /// Updates a task's status to submitted and adds the proof image URL.
     /// - Parameters:
     ///   - task: The Task object to submit. Must have a valid ID.
@@ -462,7 +622,7 @@ class FirebaseService {
         ])
         print("Successfully declined task: \(task.title) (\(taskId))")
     }
-
+    
     /// Resets a task's status to pending and clears the proof image URL.
     /// - Parameter task: The Task object to reset. Must have a valid ID.
     /// - Throws: An error if the task ID is missing or the Firestore operation fails.
@@ -471,7 +631,7 @@ class FirebaseService {
             print("Error: Task ID is missing for reset.")
             throw NSError(domain: "FirebaseServiceError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Task ID missing for reset."])
         }
-
+        
         // Update task status to pending and clear proof image URL
         let taskRef = db.collection("tasks").document(taskId)
         try await taskRef.updateData([
@@ -481,8 +641,8 @@ class FirebaseService {
         ])
         print("Successfully reset task to pending: \(task.title) (\(taskId))")
     }
-
-
+    
+    
     // MARK: - Storage Operations (Phase 6)
     
     /// Uploads a profile picture to Firebase Storage.
@@ -530,7 +690,7 @@ class FirebaseService {
         print("Task proof download URL: \(downloadURL.absoluteString)")
         return downloadURL.absoluteString
     }
-
+    
     /// Uploads a reward image to Firebase Storage.
     /// - Parameters:
     ///   - image: The UIImage to upload.
@@ -542,17 +702,17 @@ class FirebaseService {
             print("Error: Could not get JPEG data from UIImage for reward image.")
             throw NSError(domain: "FirebaseServiceError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Could not get image data for reward."])
         }
-
+        
         let storageRef = storage.reference().child("reward_images/\(imageName).jpg")
-
+        
         let _ = try await storageRef.putDataAsync(imageData)
         print("Successfully uploaded reward image \(imageName).")
-
+        
         let downloadURL = try await storageRef.downloadURL()
         print("Reward image download URL: \(downloadURL.absoluteString)")
         return downloadURL.absoluteString
     }
-
+    
     /// Uploads a task display image to Firebase Storage.
     /// - Parameters:
     ///   - image: The UIImage to upload.
@@ -564,15 +724,146 @@ class FirebaseService {
             print("Error: Could not get JPEG data from UIImage for task display image.")
             throw NSError(domain: "FirebaseServiceError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Could not get image data for task display."])
         }
-
+        
         let storageRef = storage.reference().child("task_display_images/\(imageName).jpg")
-
+        
         let _ = try await storageRef.putDataAsync(imageData)
         print("Successfully uploaded task display image \(imageName).")
-
+        
         let downloadURL = try await storageRef.downloadURL()
         print("Task display image download URL: \(downloadURL.absoluteString)")
         return downloadURL.absoluteString
     }
     
+    
+    // MARK: - Reward Claiming Operations
+// MARK: - Reward Claim Fetching
+
+    /// Fetches RewardClaim documents for a given family, optionally filtering by status.
+    /// - Parameters:
+    ///   - familyId: The ID of the family.
+    ///   - statuses: An optional array of ClaimStatus raw values to filter by. If nil or empty, fetches all claims for the family.
+    /// - Returns: An array of RewardClaim objects.
+    /// - Throws: An error if the Firestore query fails.
+    func fetchRewardClaims(forFamily familyId: String, statuses: [String]? = nil) async throws -> [RewardClaim] {
+        var query: Query = db.collection("rewardClaims").whereField("familyId", isEqualTo: familyId)
+
+        if let statuses = statuses, !statuses.isEmpty {
+            query = query.whereField("status", in: statuses)
+        }
+        // Add ordering if needed, e.g., by claimedAt date descending
+        query = query.order(by: "claimedAt", descending: true)
+
+        let querySnapshot = try await query.getDocuments()
+        let claims = querySnapshot.documents.compactMap { try? $0.data(as: RewardClaim.self) }
+
+        print("Successfully fetched \(claims.count) reward claims for family \(familyId) (statuses: \(statuses?.joined(separator: ", ") ?? "all"))")
+        return claims
+    }
+
+    /// Fetches RewardClaim documents for a given child.
+    /// - Parameter childId: The ID of the child.
+    /// - Returns: An array of RewardClaim objects for the specified child.
+    /// - Throws: An error if the Firestore query fails.
+    func fetchRewardClaims(forChild childId: String) async throws -> [RewardClaim] {
+        let query = db.collection("rewardClaims")
+            .whereField("childId", isEqualTo: childId)
+            .order(by: "claimedAt", descending: true) // Order by claim date
+
+        let querySnapshot = try await query.getDocuments()
+        let claims = querySnapshot.documents.compactMap { try? $0.data(as: RewardClaim.self) }
+
+        print("Successfully fetched \(claims.count) reward claims for child \(childId)")
+        return claims
+    }
+    
+    /// Creates a RewardClaim document and deducts points from the child's profile within a transaction.
+    /// - Parameters:
+    ///   - reward: The Reward being claimed.
+    ///   - child: The UserProfile of the child claiming the reward.
+    ///   - familyId: The ID of the family.
+    /// - Throws: An error if the transaction fails, child has insufficient points, or required IDs are missing.
+    func claimReward(reward: Reward, child: UserProfile, familyId: String) async throws {
+        guard let childId = child.id else {
+            throw NSError(domain: "FirebaseServiceError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Child ID missing for reward claim."])
+        }
+        guard let rewardId = reward.id else {
+            throw NSError(domain: "FirebaseServiceError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Reward ID missing for reward claim."])
+        }
+        // Use the non-optional points field
+        guard child.points >= reward.requiredPoints else {
+            throw NSError(domain: "FirebaseServiceError", code: 400, userInfo: [NSLocalizedDescriptionKey: "Insufficient points to claim this reward."])
+        }
+        
+        let childRef = db.collection("users").document(childId)
+        let newClaimRef = db.collection("rewardClaims").document() // Auto-generate ID for the new claim
+        
+        try await db.runTransaction { (transaction, errorPointer) -> Any? in
+            // 1. Read the child's current points within the transaction (for safety)
+            let childSnapshot: DocumentSnapshot
+            do {
+                childSnapshot = try transaction.getDocument(childRef)
+            } catch let fetchError as NSError {
+                errorPointer?.pointee = fetchError
+                print("Transaction Error: Failed to read child document \(childId). \(fetchError.localizedDescription)")
+                return nil
+            }
+            
+            // Use the non-optional points field, default to 0 if somehow missing in DB
+            let pointsOnServer = childSnapshot.data()?["points"] as? Int64 ?? 0
+            
+            // 2. Verify points again within transaction
+            guard pointsOnServer >= reward.requiredPoints else {
+                let error = NSError(domain: "FirebaseServiceError", code: 400, userInfo: [NSLocalizedDescriptionKey: "Insufficient points (checked in transaction)."])
+                errorPointer?.pointee = error
+                print("Transaction Error: Insufficient points for child \(childId) to claim reward \(rewardId).")
+                return nil
+            }
+            
+            // 3. Deduct points
+            transaction.updateData(["points": FieldValue.increment(-Int64(reward.requiredPoints))], forDocument: childRef)
+            
+            // 4. Create the RewardClaim document
+            // Ensure RewardClaim initializer uses correct field names (reward.requiredPoints)
+            let newClaim = RewardClaim(reward: reward, child: child, familyId: familyId)
+            do {
+                // Set the data for the auto-generated document ID
+                try transaction.setData(from: newClaim, forDocument: newClaimRef)
+            } catch let encodeError as NSError {
+                errorPointer?.pointee = encodeError
+                print("Transaction Error: Failed to encode RewardClaim. \(encodeError.localizedDescription)")
+                return nil
+            }
+            
+            return nil // Indicate success to Firestore transaction API
+        }
+        
+        // If the transaction completes without throwing, it was successful.
+        print("Successfully claimed reward \(rewardId) for child \(childId) and created claim \(newClaimRef.documentID)")
+    }
+    /// Updates specific fields on a RewardClaim document.
+    /// - Parameters:
+    ///   - claimId: The ID of the RewardClaim document to update.
+    ///   - updates: A dictionary containing the fields and values to update.
+    /// - Throws: An error if the Firestore operation fails.
+    func updateRewardClaim(claimId: String, updates: [String: Any]) async throws {
+        let claimRef = db.collection("rewardClaims").document(claimId)
+        try await claimRef.updateData(updates)
+        print("Successfully updated reward claim \(claimId) with fields: \(updates.keys.joined(separator: ", "))")
+    }
+    
+    /// Updates a RewardClaim to set the reminder status and timestamp.
+    /// - Parameter claimId: The ID of the RewardClaim document to update.
+    /// - Throws: An error if the Firestore operation fails.
+    func updateRewardClaimReminder(claimId: String) async throws {
+        let claimRef = db.collection("rewardClaims").document(claimId)
+        // Only update if status is pending or promised? Or allow multiple reminders?
+        // For now, allow reminder anytime before granted.
+        // Consider adding logic in ViewModel to limit reminder frequency.
+        try await claimRef.updateData([
+            "status": ClaimStatus.reminded.rawValue,
+            "lastRemindedAt": Timestamp(date: Date())
+        ])
+        print("Successfully updated reminder for reward claim \(claimId)")
+    }
 }

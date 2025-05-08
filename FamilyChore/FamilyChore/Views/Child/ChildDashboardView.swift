@@ -45,16 +45,48 @@ struct ChildDashboardView: View {
                                     .font(Font.theme.body)
                                     .foregroundColor(Color.theme.textSecondary)
                             } else {
-                                ForEach(viewModel.assignedRewards) { reward in
-                                    NavigationLink {
-                                        RewardDetailView(reward: reward)
-                                    } label: {
-                                        // Consider adding reward image here too
-                                        Text(reward.title)
-                                            .font(Font.theme.headline) // Use headline for list items
-                                            .foregroundColor(Color.theme.textPrimary)
-                                    }
+                                // Iterate over claims now
+                                ForEach(viewModel.rewardClaims) { claim in
+                                    // We need the original Reward data too for title/cost if claim doesn't store it
+                                    // This requires fetching Rewards separately or embedding essential Reward data in RewardClaim
+                                    // Assuming RewardClaim has rewardTitle and rewardCost for now.
+                                    RewardProgressRow(
+                                        claim: claim, // Pass the claim object
+                                        reward: Reward(id: claim.rewardId, title: claim.rewardTitle, requiredPoints: claim.rewardCost, assignedChildIds: [claim.childId], createdByParentId: "", familyId: claim.familyId), // Reconstruct a minimal Reward for the row
+                                        progress: viewModel.progress(for: claim), // Use progress func that takes a claim
+                                        currentPoints: viewModel.childProfile?.points ?? 0,
+                                        onClaim: nil, // Claim button is handled by this row based on status
+                                        onRemind: { // Provide the remind action
+                                            Task {
+                                                await viewModel.sendReminder(for: claim)
+                                                // Optionally show confirmation
+                                            }
+                                        }
+                                    )
+                                    // Add NavigationLink if needed
+                                    // NavigationLink { RewardDetailView(reward: reward) } label: { RewardProgressRow(...) }
                                 }
+                                // TODO: Need to display rewards that *can* be claimed but haven't been yet.
+                                // This requires fetching assignedRewards separately and filtering them.
+
+                                // --- Display Unclaimed Rewards ---
+                                ForEach(viewModel.unclaimedRewards) { reward in
+                                     RewardProgressRow(
+                                         claim: nil, // No claim object for unclaimed rewards
+                                         reward: reward,
+                                         progress: viewModel.progress(for: reward), // Use progress func for Reward
+                                         currentPoints: viewModel.childProfile?.points ?? 0,
+                                         onClaim: { // Provide the claim action
+                                             Task {
+                                                 await viewModel.claimReward(reward)
+                                             }
+                                         },
+                                         onRemind: nil // No reminder for unclaimed rewards
+                                     )
+                                     // Add NavigationLink if needed
+                                     // NavigationLink { RewardDetailView(reward: reward) } label: { RewardProgressRow(...) }
+                                 }
+
                             }
                         }
                         .listRowSeparator(.hidden)

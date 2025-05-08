@@ -8,5 +8,7 @@
 		<string>AmaticSC-Bold.ttf</string>
 		<string>AmaticSC-Regular.ttf</string>
 	</array>
+	<key>Appearance</key>
+	<string>Light</string>
 </dict>
 </plist>

@@ -3,9 +3,9 @@ import SwiftUI
 /// The main dashboard view for Parent users.
 struct ParentDashboardView: View {
     @EnvironmentObject var authViewModel: AuthViewModel // To access current user/profile
-    @StateObject var viewModel = ParentDashboardViewModel() // ViewModel for dashboard data
-    @StateObject var manageChildrenViewModel = ManageChildrenViewModel() // ViewModel for managing children
+    @StateObject var viewModel = ParentDashboardViewModel() // ViewModel now handles parents, children, tasks
     @State private var showingAddChildView = false // State for presenting AddChildView modally
+    @State private var showingAddCoParentView = false // State for presenting AddCoParentView modally
 
     var body: some View {
         NavigationView {
@@ -26,57 +26,54 @@ struct ParentDashboardView: View {
                     } else {
                         // Display Parent Dashboard content
                         List {
-                            Section(header: Text("Children").font(Font.theme.headline).foregroundColor(Color.theme.textSecondary)) {
-                                if manageChildrenViewModel.children.isEmpty {
+                            // --- Family Management Section ---
+                            Section(header: FamilySectionHeader()) {
+                                // Parents List
+                                SubSectionHeader(title: "Parents")
+                                if viewModel.parents.isEmpty {
+                                    Text("Loading parents...") // Or just you if no co-parent added
+                                        .font(Font.theme.body)
+                                        .foregroundColor(Color.theme.textSecondary)
+                                } else {
+                                    ForEach(viewModel.parents) { parent in
+                                        ParentRow(parent: parent)
+                                    }
+                                    // Allow removing other parents? Maybe not from here.
+                                }
+                                // Add Co-Parent Button
+                                Button { showingAddCoParentView = true } label: {
+                                    Label("Add Co-Parent", systemImage: "person.badge.plus")
+                                        .font(Font.theme.headline)
+                                }
+                                .buttonStyle(.borderless)
+                                .foregroundColor(Color.theme.accentApp)
+                                .listRowBackground(Color.theme.accentApp.opacity(0.1))
+
+                                // Children List
+                                SubSectionHeader(title: "Children")
+                                if viewModel.children.isEmpty {
                                     Text("No children added yet.")
                                         .font(Font.theme.body)
                                         .foregroundColor(Color.theme.textSecondary)
                                 } else {
-                                    ForEach(manageChildrenViewModel.children) { child in
+                                    ForEach(viewModel.children) { child in
+                                        // Navigate to the new ChildDetailView
                                         NavigationLink {
-                                            EditChildView(childProfile: child)
-                                                .environmentObject(manageChildrenViewModel)
-                                        } label: {
-                                            HStack(spacing: 15) {
-                                                if let imageUrlString = child.profilePictureUrl, let imageUrl = URL(string: imageUrlString) {
-                                                    AsyncImage(url: imageUrl) { phase in
-                                                        switch phase {
-                                                        case .empty:
-                                                            ProgressView()
-                                                                .frame(width: 40, height: 40)
-                                                        case .success(let image):
-                                                            image.resizable()
-                                                                 .aspectRatio(contentMode: .fill)
-                                                                 .frame(width: 40, height: 40)
-                                                                 .clipShape(Circle())
-                                                        case .failure:
-                                                            Image(systemName: "person.circle.fill")
-                                                                .resizable().scaledToFit()
-                                                                .frame(width: 40, height: 40)
-                                                                .foregroundColor(Color.theme.textSecondary)
-                                                        @unknown default:
-                                                            EmptyView().frame(width: 40, height: 40)
-                                                        }
-                                                    }
-                                                } else {
-                                                    Image(systemName: "person.circle.fill")
-                                                        .resizable().scaledToFit()
-                                                        .frame(width: 40, height: 40)
-                                                        .foregroundColor(Color.theme.textSecondary)
-                                                }
-                                                Text(child.name ?? "Unnamed Child")
-                                                    .font(Font.theme.headline)
-                                                    .foregroundColor(Color.theme.textPrimary)
+                                            // Pass the child's ID to the detail view
+                                            if let childId = child.id {
+                                                ChildDetailView(childId: childId)
+                                            } else {
+                                                // Handle case where child ID is missing (shouldn't happen ideally)
+                                                Text("Error: Child ID missing")
                                             }
-                                            .padding(.vertical, 8)
+                                        } label: {
+                                            ChildRow(child: child) // Keep using the extracted row view
                                         }
                                     }
-                                    .onDelete(perform: deleteChild)
+                                    .onDelete(perform: deleteChild) // Use ParentDashboardViewModel's delete
                                 }
-                                // Button to present AddChildView modally
-                                Button {
-                                    showingAddChildView = true
-                                } label: {
+                                // Add Child Button
+                                Button { showingAddChildView = true } label: {
                                     Label("Add New Child", systemImage: "plus.circle.fill")
                                         .font(Font.theme.headline)
                                 }
@@ -84,8 +81,27 @@ struct ParentDashboardView: View {
                                 .foregroundColor(Color.theme.accentApp)
                                 .listRowBackground(Color.theme.accentApp.opacity(0.1))
                             }
-                            .listRowSeparator(.hidden)
+                            .listRowSeparator(.hidden) // Apply to the whole section
 
+// --- Pending Reward Claims Section ---
+                            Section(header: Text("Pending Reward Claims").font(Font.theme.headline).foregroundColor(Color.theme.textSecondary)) {
+                                if viewModel.pendingRewardClaims.isEmpty {
+                                    Text("No rewards currently claimed.")
+                                        .font(Font.theme.body)
+                                        .foregroundColor(Color.theme.textSecondary)
+                                } else {
+                                    ForEach(viewModel.pendingRewardClaims) { claim in
+                                        NavigationLink {
+                                            RewardClaimApprovalView(rewardClaim: claim)
+                                        } label: {
+                                            // Extracted Row View (or keep inline VStack)
+                                            RewardClaimRow(claim: claim)
+                                        }
+                                    }
+                                }
+                            }
+                            .listRowSeparator(.hidden)
+                            // --- Tasks Needing Approval Section ---
                             Section(header: Text("Tasks Needing Approval").font(Font.theme.headline).foregroundColor(Color.theme.textSecondary)) {
                                 if viewModel.tasksNeedingApproval.isEmpty {
                                     Text("No tasks currently need approval.")
@@ -95,6 +111,7 @@ struct ParentDashboardView: View {
                                     ForEach(viewModel.tasksNeedingApproval) { task in
                                         NavigationLink {
                                             TaskApprovalView(task: task)
+                                                .environmentObject(viewModel) // Pass dashboard VM if needed
                                         } label: {
                                             Text(task.title)
                                                 .font(Font.theme.subheadline)
@@ -105,13 +122,14 @@ struct ParentDashboardView: View {
                             }
                             .listRowSeparator(.hidden)
 
+                            // --- Manage Tasks & Rewards Section ---
                             Section(header: Text("Manage Tasks & Rewards").font(Font.theme.headline).foregroundColor(Color.theme.textSecondary)) {
-                                NavigationLink(destination: ManageTasksView()) {
+                                NavigationLink(destination: ManageTasksView()) { // Assumes ManageTasksView uses its own VM or gets familyId
                                     Text("Manage Tasks")
                                         .foregroundColor(Color.theme.textSecondary)
                                 }
                                 .font(Font.theme.body)
-                                NavigationLink(destination: ManageRewardsView()) {
+                                NavigationLink(destination: ManageRewardsView()) { // Assumes ManageRewardsView uses its own VM or gets familyId
                                     Text("Manage Rewards")
                                         .foregroundColor(Color.theme.textSecondary)
                                 }
@@ -119,8 +137,8 @@ struct ParentDashboardView: View {
                             }
                             .listRowSeparator(.hidden)
                         }
-                        .listStyle(.insetGrouped) // Or .plain
-                        .scrollContentBackground(.hidden) // Make List background transparent (iOS 16+)
+                        .listStyle(.insetGrouped)
+                        .scrollContentBackground(.hidden)
                         .background(Color.clear) // Fallback/alternative for List background
                         .font(Font.theme.body) // Default font for list content
                     }
@@ -182,36 +200,144 @@ struct ParentDashboardView: View {
                 // Fetch data when the view appears
                 if let familyId = authViewModel.userProfile?.familyId {
                     Task {
+                        // Fetch data using ParentDashboardViewModel
                         await viewModel.fetchData(forFamily: familyId)
-                        manageChildrenViewModel.setupListener(forFamily: familyId)
+                        // Setup listeners using ParentDashboardViewModel
+                        viewModel.setupListeners(forFamily: familyId)
                     }
                 } else {
+                    // Use ParentDashboardViewModel's error property
                     viewModel.error = NSError(domain: "ParentDashboardError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Parent profile missing family ID."])
                 }
             }
             .onDisappear {
-                manageChildrenViewModel.removeListener()
+                // Remove listeners using ParentDashboardViewModel
+                viewModel.removeListeners()
             }
             .sheet(isPresented: $showingAddChildView) {
                 // Present AddChildView modally
                 NavigationView {
+                    // AddChildView might need ParentDashboardViewModel if it interacts with family data directly
                     AddChildView()
                         .environmentObject(authViewModel)
-                        .environmentObject(manageChildrenViewModel)
+                        .environmentObject(viewModel) // Pass ParentDashboardViewModel
                 }
             }
+             .sheet(isPresented: $showingAddCoParentView) {
+                 // Present AddCoParentView modally
+                 NavigationView {
+                     AddCoParentView()
+                         .environmentObject(authViewModel)
+                         // AddCoParentView uses its own ViewModel
+                 }
+             }
         } // End of NavigationView
         .navigationViewStyle(.stack)
     } // End of body
 
-    /// Deletes children at the specified offsets.
+    /// Deletes children at the specified offsets using ParentDashboardViewModel.
     private func deleteChild(at offsets: IndexSet) {
-        let childrenToDelete = offsets.map { manageChildrenViewModel.children[$0] }
+        let childrenToDelete = offsets.map { viewModel.children[$0] }
         for child in childrenToDelete {
             Task {
-                await manageChildrenViewModel.removeChild(child)
+                // Need a removeChild function in ParentDashboardViewModel or FirebaseService
+                // For now, assuming FirebaseService.removeChildAccount exists
+                if let childId = child.id, let familyId = child.familyId {
+                    do {
+                        try await FirebaseService.shared.removeChildAccount(childId: childId, fromFamily: familyId)
+                        print("Successfully initiated removal for child \(childId)")
+                        // Listener should update the list
+                    } catch {
+                        print("Error initiating child removal: \(error.localizedDescription)")
+                        // Optionally set viewModel.error here
+                    }
+                }
             }
         }
+    }
+}
+
+// MARK: - Subviews for Rows and Headers (Extracted for clarity)
+
+struct FamilySectionHeader: View {
+    var body: some View {
+        HStack {
+            Image(systemName: "house.fill")
+            Text("Family Management")
+        }
+        .font(Font.theme.title3) // Use a slightly larger font for main section
+        .foregroundColor(Color.theme.textPrimary)
+        .textCase(nil) // Prevent automatic uppercasing
+        .padding(.bottom, 5)
+    }
+}
+
+struct SubSectionHeader: View {
+    let title: String
+    var body: some View {
+         Text(title)
+            .font(Font.theme.headline)
+            .foregroundColor(Color.theme.textSecondary)
+            .padding(.top, 10) // Add space above subsection headers
+    }
+}
+
+
+struct ParentRow: View {
+    let parent: UserProfile
+
+    var body: some View {
+        HStack(spacing: 15) {
+            if let imageUrlString = parent.profilePictureUrl, let imageUrl = URL(string: imageUrlString) {
+                AsyncImage(url: imageUrl) { phase in
+                    switch phase {
+                    case .empty: ProgressView().frame(width: 40, height: 40)
+                    case .success(let image): image.resizable().aspectRatio(contentMode: .fill).frame(width: 40, height: 40).clipShape(Circle())
+                    case .failure: Image(systemName: "person.crop.circle.badge.exclamationmark.fill").resizable().scaledToFit().frame(width: 40, height: 40).foregroundColor(.red)
+                    @unknown default: EmptyView().frame(width: 40, height: 40)
+                    }
+                }
+                .id("parent-\(parent.id ?? UUID().uuidString)-\(imageUrlString)") // More specific ID
+            } else {
+                Image(systemName: "person.circle.fill")
+                    .resizable().scaledToFit()
+                    .frame(width: 40, height: 40)
+                    .foregroundColor(Color.theme.textSecondary)
+            }
+            Text(parent.name ?? parent.email) // Show name or email
+                .font(Font.theme.headline)
+                .foregroundColor(Color.theme.textPrimary)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+struct ChildRow: View {
+    let child: UserProfile
+
+    var body: some View {
+         HStack(spacing: 15) {
+             if let imageUrlString = child.profilePictureUrl, let imageUrl = URL(string: imageUrlString) {
+                 AsyncImage(url: imageUrl) { phase in
+                     switch phase {
+                     case .empty: ProgressView().frame(width: 40, height: 40)
+                     case .success(let image): image.resizable().aspectRatio(contentMode: .fill).frame(width: 40, height: 40).clipShape(Circle())
+                     case .failure: Image(systemName: "person.crop.circle.badge.exclamationmark.fill").resizable().scaledToFit().frame(width: 40, height: 40).foregroundColor(.red)
+                     @unknown default: EmptyView().frame(width: 40, height: 40)
+                     }
+                 }
+                 .id("child-\(child.id ?? UUID().uuidString)-\(imageUrlString)") // More specific ID
+             } else {
+                 Image(systemName: "person.circle.fill")
+                     .resizable().scaledToFit()
+                     .frame(width: 40, height: 40)
+                     .foregroundColor(Color.theme.textSecondary)
+             }
+             Text(child.name ?? "Unnamed Child")
+                 .font(Font.theme.headline)
+                 .foregroundColor(Color.theme.textPrimary)
+         }
+         .padding(.vertical, 8)
     }
 }
 
@@ -257,3 +383,44 @@ struct ParentDashboardView: View {
 //extension ParentDashboardViewModel {
 //    // Add mock data or states if necessary for previews
 //}
+
+struct RewardClaimRow: View {
+    let claim: RewardClaim
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Reward: \(claim.rewardTitle)")
+                .font(Font.theme.headline)
+            Text("Child: \(claim.childName ?? "Unknown")")
+                .font(Font.theme.subheadline)
+            Text("Status: \(claim.status.displayName)")
+                .font(Font.theme.caption1)
+                .foregroundColor(statusColor(claim.status)) // Use helper for color
+            Text("Claimed: \(claim.claimedAt.dateValue(), style: .date)")
+                .font(Font.theme.caption1)
+                .foregroundColor(Color.theme.textSecondary)
+            // Optionally show reminder/promised date
+             if claim.status == .reminded, let remindedAt = claim.lastRemindedAt {
+                 Text("Last Reminder: \(remindedAt.dateValue(), style: .date)")
+                     .font(Font.theme.caption1)
+                     .foregroundColor(.orange)
+             }
+             if claim.status == .promised, let promisedDate = claim.promisedDate {
+                  Text("Promised Date: \(promisedDate.dateValue(), style: .date)")
+                      .font(Font.theme.caption1)
+                      .foregroundColor(.blue)
+              }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // Helper function for status color (can be shared if needed)
+    private func statusColor(_ status: ClaimStatus) -> Color {
+        switch status {
+        case .pending: return Color.theme.textSecondary
+        case .reminded: return .orange
+        case .promised: return .blue
+        case .granted: return .green
+        }
+    }
+}

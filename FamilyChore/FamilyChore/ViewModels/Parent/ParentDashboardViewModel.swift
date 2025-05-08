@@ -8,11 +8,17 @@ class ParentDashboardViewModel: ObservableObject {
 
     // MARK: - Published Properties
 
+    /// Array of parent profiles associated with the current family.
+    @Published var parents: [UserProfile] = []
+
     /// Array of children associated with the parent's family.
     @Published var children: [UserProfile] = []
 
     /// Array of tasks that require parent approval.
     @Published var tasksNeedingApproval: [ChildTask] = []
+
+    /// Array of reward claims pending parent action.
+    @Published var pendingRewardClaims: [RewardClaim] = []
 
     /// Indicates if data is currently being loaded.
     @Published var isLoading = false
@@ -28,11 +34,17 @@ class ParentDashboardViewModel: ObservableObject {
     /// Reference to the shared FirebaseService instance.
     private let firebaseService = FirebaseService.shared
 
+    /// Listener registration for parent updates.
+    private var parentsListener: ListenerRegistration?
+
     /// Listener registration for children updates.
     private var childrenListener: ListenerRegistration?
 
     /// Listener registration for tasks needing approval updates.
     private var tasksNeedingApprovalListener: ListenerRegistration?
+
+    /// Listener registration for pending reward claims.
+    private var pendingClaimsListener: ListenerRegistration?
 
     // MARK: - Initialization
 
@@ -54,15 +66,30 @@ class ParentDashboardViewModel: ObservableObject {
     func fetchData(forFamily familyId: String) async {
         isLoading = true
         error = nil
-
-        // Fetch children
-        await fetchChildren(forFamily: familyId)
-
-        // Fetch tasks needing approval
-        await fetchTasksNeedingApproval(forFamily: familyId)
-
-        isLoading = false // Note: This might be set to false after all fetches complete
+        // Use TaskGroup for concurrent fetching
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await self.fetchParents(forFamily: familyId) }
+            group.addTask { await self.fetchChildren(forFamily: familyId) }
+            group.addTask { await self.fetchTasksNeedingApproval(forFamily: familyId) }
+            group.addTask { await self.fetchPendingRewardClaims(forFamily: familyId) } // Add claim fetching
+        }
+        isLoading = false
     }
+
+    /// Fetches parent profiles for the specified family.
+    /// - Parameter familyId: The ID of the family.
+    @MainActor
+    private func fetchParents(forFamily familyId: String) async {
+         do {
+             self.parents = try await firebaseService.fetchParents(forFamily: familyId)
+             print("Fetched \(self.parents.count) parents for family \(familyId)")
+         } catch {
+             // Avoid overwriting error from other fetches if one already occurred
+             if self.error == nil { self.error = error }
+             print("Error fetching parents: \(error.localizedDescription)")
+         }
+     }
+
 
     /// Fetches children for the specified family.
     /// - Parameter familyId: The ID of the family.
@@ -104,13 +131,46 @@ class ParentDashboardViewModel: ObservableObject {
         }
     }
 
+    /// Fetches reward claims that are pending parent action for the specified family.
+    /// - Parameter familyId: The ID of the family.
+    @MainActor
+    private func fetchPendingRewardClaims(forFamily familyId: String) async {
+        do {
+            // Query for claims in the family with status pending or reminded
+            let pendingStatuses = [ClaimStatus.pending.rawValue, ClaimStatus.reminded.rawValue]
+            self.pendingRewardClaims = try await firebaseService.fetchRewardClaims(forFamily: familyId, statuses: pendingStatuses)
+            print("Fetched \(self.pendingRewardClaims.count) pending reward claims for family \(familyId)")
+        } catch {
+             if self.error == nil { self.error = error }
+             print("Error fetching pending reward claims: \(error.localizedDescription)")
+         }
+     }
+
+
     // MARK: - Real-time Listeners (Optional but recommended for dashboards)
 
-    /// Sets up real-time listeners for children and tasks needing approval.
+    /// Sets up real-time listeners for parents, children, tasks needing approval, and pending claims.
     /// - Parameter familyId: The ID of the parent's family.
     func setupListeners(forFamily familyId: String) {
         // Remove existing listeners first
         removeListeners()
+
+        // Listener for parents updates
+        parentsListener = firebaseService.db.collection("users")
+            .whereField("familyId", isEqualTo: familyId)
+            .whereField("role", isEqualTo: UserRole.parent.rawValue)
+            .addSnapshotListener { [weak self] querySnapshot, error in
+                guard let self = self else { return }
+                if let error = error {
+                    print("Error listening for parents updates: \(error.localizedDescription)")
+                    self.error = error // Update error state
+                    return
+                }
+                guard let snapshot = querySnapshot else { return }
+                self.parents = snapshot.documents.compactMap { try? $0.data(as: UserProfile.self) }
+                print("Real-time update: Fetched \(self.parents.count) parents for family \(familyId)")
+            }
+
 
         // Listener for children updates
         childrenListener = firebaseService.db.collection("users")
@@ -175,15 +235,36 @@ class ParentDashboardViewModel: ObservableObject {
                  }
                  print("Real-time update: Fetched \(self.tasksNeedingApproval.count) tasks needing approval (filtered by status only)")
              }
-    }
+
+       // Listener for pending reward claims updates
+       let pendingStatuses = [ClaimStatus.pending.rawValue, ClaimStatus.reminded.rawValue]
+       pendingClaimsListener = firebaseService.db.collection("rewardClaims")
+           .whereField("familyId", isEqualTo: familyId)
+           .whereField("status", in: pendingStatuses) // Listen for pending or reminded
+           .addSnapshotListener { [weak self] querySnapshot, error in
+                guard let self = self else { return }
+                if let error = error {
+                    print("Error listening for pending claims updates: \(error.localizedDescription)")
+                    self.error = error
+                    return
+                }
+                guard let snapshot = querySnapshot else { return }
+                self.pendingRewardClaims = snapshot.documents.compactMap { try? $0.data(as: RewardClaim.self) }
+                print("Real-time update: Fetched \(self.pendingRewardClaims.count) pending reward claims for family \(familyId)")
+            }
+   }
 
 
     /// Removes all active Firestore listeners.
-    private func removeListeners() {
+    public func removeListeners() {
+        parentsListener?.remove()
+        parentsListener = nil
         childrenListener?.remove()
         childrenListener = nil
         tasksNeedingApprovalListener?.remove()
         tasksNeedingApprovalListener = nil
+        pendingClaimsListener?.remove() // Remove claims listener
+        pendingClaimsListener = nil
         print("Firestore listeners removed.")
     }
 
@@ -222,6 +303,71 @@ class ParentDashboardViewModel: ObservableObject {
         }
         isLoading = false
     }
+
+    // MARK: - Co-Parent Management
+
+    /// Attempts to find an existing parent user by email and add them to the current family.
+    /// - Parameters:
+    ///   - email: The email address of the potential co-parent.
+    ///   - currentFamilyId: The ID of the family to add the co-parent to.
+    /// - Returns: `true` if the co-parent was successfully added, `false` otherwise.
+    @MainActor
+    func addCoParent(email: String, currentFamilyId: String?) async -> Bool {
+        guard let familyId = currentFamilyId else {
+            self.error = NSError(domain: "ParentDashboardViewModel", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Current user's family ID not found."])
+            return false
+        }
+
+        guard !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+             self.error = NSError(domain: "ParentDashboardViewModel", code: 1002, userInfo: [NSLocalizedDescriptionKey: "Co-parent email cannot be empty."])
+             return false
+         }
+
+        self.error = nil // Clear previous errors
+
+        do {
+            // 1. Find the potential co-parent by email
+            print("[ViewModel] Searching for parent with email: \(email)")
+            guard let coParentProfile = try await firebaseService.findParentByEmail(email: email) else {
+                print("[ViewModel] No parent found with email: \(email)")
+                self.error = NSError(domain: "ParentDashboardViewModel", code: 1003, userInfo: [NSLocalizedDescriptionKey: "No parent account found with that email address."])
+                return false
+            }
+            print("[ViewModel] Found potential co-parent: \(coParentProfile.id ?? "N/A")")
+
+            // 2. Validate the found profile
+            guard coParentProfile.role == .parent else {
+                // This shouldn't happen if findParentByEmail filters correctly, but double-check
+                print("[ViewModel] Found user is not a parent.")
+                self.error = NSError(domain: "ParentDashboardViewModel", code: 1004, userInfo: [NSLocalizedDescriptionKey: "The user found with that email is not registered as a parent."])
+                return false
+            }
+
+            guard coParentProfile.familyId == nil || coParentProfile.familyId!.isEmpty else {
+                print("[ViewModel] Found parent is already associated with a family (\(coParentProfile.familyId ?? "unknown")).")
+                self.error = NSError(domain: "ParentDashboardViewModel", code: 1005, userInfo: [NSLocalizedDescriptionKey: "This parent is already part of another family."])
+                return false
+            }
+            
+            guard let coParentId = coParentProfile.id else {
+                 print("[ViewModel] Found parent profile is missing its ID.")
+                 self.error = NSError(domain: "ParentDashboardViewModel", code: 1006, userInfo: [NSLocalizedDescriptionKey: "Found parent profile is missing an ID."])
+                 return false
+             }
+
+            // 3. Add the co-parent to the family
+            print("[ViewModel] Attempting to add parent \(coParentId) to family \(familyId)")
+            try await firebaseService.addParentToFamily(parentToAddId: coParentId, familyId: familyId)
+            print("[ViewModel] Successfully added parent \(coParentId) to family \(familyId)")
+            return true
+
+        } catch {
+            print("[ViewModel] Error during addCoParent process: \(error.localizedDescription)")
+            self.error = error // Store the error from FirebaseService
+            return false
+        }
+    }
+
 
     // MARK: - Navigation (Handled by Views, but ViewModel prepares data)
 

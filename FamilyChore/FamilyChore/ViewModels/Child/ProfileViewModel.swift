@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-import FirebaseStorage // For Storage operations
+import FirebaseFirestore // For Storage operations
 import UIKit // For UIImage (assuming profile picture is handled as UIImage initially)
 // Assuming FirebaseService and Models are accessible
 

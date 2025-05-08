@@ -62,10 +62,13 @@ class ManageChildrenViewModel: ObservableObject {
 
                 guard let snapshot = querySnapshot else { return }
 
-                self.children = snapshot.documents.compactMap { document in
+                let updatedChildren = snapshot.documents.compactMap { document -> UserProfile? in
                     try? document.data(as: UserProfile.self)
+                    // Removed detailed print from here for cleaner logs
                 }
-                print("Real-time update: Fetched \(self.children.count) children for family \(familyId)")
+                self.children = updatedChildren
+                // Keep this summary print if desired, or remove it too
+                print("Real-time update: Fetched \(self.children.count) children for family \(familyId).")
             }
     }
 
@@ -110,26 +113,37 @@ class ManageChildrenViewModel: ObservableObject {
         isLoading = true
         error = nil
         var modifiableProfile = profile // Create a mutable copy
+        // print("[ViewModel] updateChildProfile called for profile ID: \(profile.id ?? "nil_profile_id"). New image provided: \(newProfileImage != nil)") // Removed
 
         // Handle image upload if a new image is provided
         if let image = newProfileImage, let userId = modifiableProfile.id {
+            // print("[ViewModel] New image is present for user ID: \(userId). Attempting upload.") // Removed
             do {
-                print("Attempting to upload new profile picture for child: \(userId)")
+                // print("[ViewModel] Attempting to upload new profile picture for child: \(userId)") // Removed
                 let imageUrl = try await firebaseService.uploadProfilePicture(image, forUserId: userId)
                 modifiableProfile.profilePictureUrl = imageUrl
-                print("New profile picture URL: \(imageUrl)")
+                // print("[ViewModel] Successfully uploaded. New profile picture URL: \(imageUrl)") // Removed
             } catch {
-                print("Error uploading profile picture for child \(userId): \(error.localizedDescription)")
-                // Decide if this error should stop the whole update or just skip image update
+                print("Error uploading profile picture for child \(userId): \(error.localizedDescription)") // Keep error log
                 self.error = error // Propagate image upload error
-                // isLoading = false // Potentially stop here if image upload is critical
+                // Optionally, decide if you want to stop the entire update or proceed without image change
+                // isLoading = false
                 // return
             }
+        } else {
+            // Optional: Keep these logs if useful for debugging edge cases
+            // if newProfileImage != nil && modifiableProfile.id == nil {
+            //     print("[ViewModel] New image provided, but profile ID is nil. Skipping image upload.")
+            // } else if newProfileImage == nil {
+            //     print("[ViewModel] No new profile image provided. Skipping image upload.")
+            // }
         }
+        
+        // print("[ViewModel] Profile to save: ID=\(modifiableProfile.id ?? "nil"), Name=\(modifiableProfile.name ?? "nil"), URL=\(modifiableProfile.profilePictureUrl ?? "nil")") // Removed
 
         do {
             try await firebaseService.updateUserProfile(modifiableProfile)
-            print("Child profile updated successfully for \(modifiableProfile.id ?? "N/A").")
+            // print("[ViewModel] Child profile updated successfully in Firestore for \(modifiableProfile.id ?? "N/A").") // Removed
             // The listener will automatically update the 'children' array
         } catch {
             self.error = error

@@ -22,11 +22,12 @@ struct UserProfile: Codable, Identifiable {
     /// The user's display name (e.g., Child's name). Optional, might be added later.
     var name: String? // Added name field as it's useful, especially for children
 
-    /// The user's Points (e.g., Child's points). Optional, might be added later.
-    var points: Int32? // Added name field as it's useful, especially for children
+    /// The user's Points (e.g., Child's points). Defaults to 0.
+    var points: Int64 = 0 // Use Int64 for Firestore increment compatibility, non-optional
 
     // Example initializer (optional, Codable provides one)
-    init(id: String? = nil, email: String, role: UserRole, familyId: String? = nil, profilePictureUrl: String? = nil, name: String? = nil, points: Int32? = 0) {
+    // Updated to reflect non-optional points with default
+    init(id: String? = nil, email: String, role: UserRole, familyId: String? = nil, profilePictureUrl: String? = nil, name: String? = nil, points: Int64 = 0) {
         self.id = id
         self.email = email
         self.role = role

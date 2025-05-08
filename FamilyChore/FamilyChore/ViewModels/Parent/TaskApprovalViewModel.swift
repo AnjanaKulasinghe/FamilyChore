@@ -37,9 +37,20 @@ class TaskApprovalViewModel: ObservableObject {
     /// - Parameter task: The Task object submitted by the child.
     init(task: ChildTask) {
         self.task = task
-        if let childId = task.assignedChildIds.first {
+        // print("[TaskApprovalVM] Initializing with task ID: \(task.id ?? "nil"), Title: \(task.title)") // Removed diagnostic
+        // print("[TaskApprovalVM] Assigned Child IDs: \(task.assignedChildIds)") // Removed diagnostic
+        
+        // Fetch profile for the first assigned child (assuming valid data now)
+        if let childId = task.assignedChildIds.first, !childId.isEmpty {
+            // print("[TaskApprovalVM] Fetching profile for child ID: \(childId)") // Removed diagnostic
             Task { [weak self] in
                 await self?.fetchChildProfile(childId: childId)
+            }
+        } else {
+            // Handle case where assignedChildIds is empty (shouldn't happen for submitted task)
+            print("[TaskApprovalVM] Error: No child ID found in assignedChildIds for submitted task \(task.id ?? "nil").")
+            DispatchQueue.main.async {
+                 self.error = NSError(domain: "TaskApprovalViewModelError", code: 404, userInfo: [NSLocalizedDescriptionKey: "Cannot identify child who submitted the task."])
             }
         }
     }
@@ -48,20 +59,19 @@ class TaskApprovalViewModel: ObservableObject {
 
     /// Fetches the profile of the child who submitted the task.
     /// - Parameter childId: The ID of the child.
-    @MainActor // Ensure UI updates happen on the main thread
-    private func fetchChildProfile(childId: String) {
+    @MainActor
+    private func fetchChildProfile(childId: String) async {
         isLoading = true
         error = nil
-        Task {
-            do {
-                self.child = try await firebaseService.fetchUserProfile(userId: childId)
-                print("Fetched child profile for task approval: \(childId)")
-            } catch {
-                self.error = error
-                print("Error fetching child profile for task approval: \(error.localizedDescription)")
-            }
-            isLoading = false
+        // Removed Task wrapper as function is already @MainActor and called within a Task
+        do {
+            self.child = try await firebaseService.fetchUserProfile(userId: childId)
+            // print("Fetched child profile for task approval: \(childId)") // Removed diagnostic
+        } catch {
+            self.error = error
+            print("Error fetching child profile for task approval (\(childId)): \(error.localizedDescription)")
         }
+        isLoading = false
     }
 
     // MARK: - Actions
