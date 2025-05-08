@@ -1,0 +1,40 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:FamilyChore}",
+            "name": "Debug FamilyChoreApp",
+            "program": "${workspaceFolder:FamilyChore}/.build/debug/FamilyChoreApp",
+            "preLaunchTask": "swift: Build Debug FamilyChoreApp"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:FamilyChore}",
+            "name": "Release FamilyChoreApp",
+            "program": "${workspaceFolder:FamilyChore}/.build/release/FamilyChoreApp",
+            "preLaunchTask": "swift: Build Release FamilyChoreApp"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:FamilyChore}",
+            "name": "Debug FamilyChore",
+            "program": "${workspaceFolder:FamilyChore}/.build/debug/FamilyChore",
+            "preLaunchTask": "swift: Build Debug FamilyChore"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:FamilyChore}",
+            "name": "Release FamilyChore",
+            "program": "${workspaceFolder:FamilyChore}/.build/release/FamilyChore",
+            "preLaunchTask": "swift: Build Release FamilyChore"
+        }
+    ]
+}

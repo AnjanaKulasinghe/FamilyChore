@@ -1,0 +1,48 @@
+//
+//  .gitignore
+//  FamilyChore
+//
+//  Created by Anjana Kulasinghe on 08/05/2025.
+//
+
+# Xcode
+DerivedData/
+build/
+*.xcworkspace
+!Podfile.lock
+
+# Swift Package Manager
+.build/
+Packages/
+.swiftpm/
+.xcresult/
+
+# CocoaPods
+Pods/
+podfile.lock
+
+# Carthage
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# Xcode specific
+*.xcuserstate
+*.xcuserdata/
+*.xcodeproj/project.xcworkspace/
+
+# macOS specific
+.DS_Store
+
+# User-specific
+*.moved-aside
+*.swp
+*.swo
+*.orig
+
+# Logs
+*.log
