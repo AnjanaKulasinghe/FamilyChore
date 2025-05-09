@@ -51,8 +51,9 @@ struct ChildDetailView: View {
                     // --- Claimed Rewards (Collapsible Sections) ---
                     // Pending/Reminded Claims
                     DisclosureGroup("Pending Claims (\(viewModel.pendingClaims.count))", isExpanded: $pendingClaimsExpanded) {
-                         // Use placeholder until ClaimedRewardsList is restored
-                         Text("Placeholder for Pending Claims")
+                         ClaimedRewardsList(claims: viewModel.pendingClaims, onDelete: { indexSet in
+                             deleteClaims(at: indexSet, from: viewModel.pendingClaims)
+                         })
                     }
                     .padding(.horizontal)
                     .font(Font.theme.headline)
@@ -60,8 +61,9 @@ struct ChildDetailView: View {
 
                     // Promised Claims
                     DisclosureGroup("Promised Rewards (\(viewModel.promisedClaims.count))", isExpanded: $promisedClaimsExpanded) {
-                         // Use placeholder until ClaimedRewardsList is restored
-                         Text("Placeholder for Promised Claims")
+                         ClaimedRewardsList(claims: viewModel.promisedClaims, onDelete: { indexSet in
+                             deleteClaims(at: indexSet, from: viewModel.promisedClaims)
+                         })
                     }
                     .padding(.horizontal)
                     .font(Font.theme.headline)
@@ -69,8 +71,9 @@ struct ChildDetailView: View {
 
                     // Granted Claims
                     DisclosureGroup("Granted Rewards (\(viewModel.grantedClaims.count))", isExpanded: $grantedClaimsExpanded) {
-                         // Use placeholder until ClaimedRewardsList is restored
-                         Text("Placeholder for Granted Claims")
+                         ClaimedRewardsList(claims: viewModel.grantedClaims, onDelete: { indexSet in
+                             deleteClaims(at: indexSet, from: viewModel.grantedClaims)
+                         })
                     }
                     .padding(.horizontal)
                     .font(Font.theme.headline)
@@ -79,7 +82,9 @@ struct ChildDetailView: View {
 
                     // --- Completed Tasks (Collapsible) ---
                     DisclosureGroup("Completed Tasks (\(viewModel.completedTasks.count))", isExpanded: $completedTasksExpanded) {
-                        TasksSection(title: nil, tasks: viewModel.completedTasks)
+                        TasksSection(title: nil, tasks: viewModel.completedTasks, onDelete: { indexSet in
+                            deleteTasks(at: indexSet, from: viewModel.completedTasks)
+                        })
                     }
                     .padding(.horizontal)
                     .font(Font.theme.headline)
@@ -110,6 +115,25 @@ struct ChildDetailView: View {
             }
         }
         .appBackground() // Apply background consistently
+    }
+
+    // Helper function to handle deletion from the correct source array
+    private func deleteClaims(at offsets: IndexSet, from sourceArray: [RewardClaim]) {
+        Task {
+            for index in offsets {
+                let claimToDelete = sourceArray[index]
+                await viewModel.deleteClaim(claimToDelete)
+            }
+        }
+    }
+// Helper function to handle deletion of tasks
+    private func deleteTasks(at offsets: IndexSet, from sourceArray: [ChildTask]) {
+        Task {
+            for index in offsets {
+                let taskToDelete = sourceArray[index]
+                await viewModel.deleteTask(taskToDelete)
+            }
+        }
     }
 }
 
@@ -164,6 +188,7 @@ private struct ProfileHeader: View {
 private struct TasksSection: View {
     let title: String?
     let tasks: [ChildTask]
+    var onDelete: ((IndexSet) -> Void)? = nil // Optional deletion handler
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -180,6 +205,7 @@ private struct TasksSection: View {
                     TaskRow(task: task) // Use a dedicated TaskRow view
                         .padding(.vertical, 3)
                 }
+                .onDelete(perform: onDelete) // Apply onDelete if provided
             }
         }
         .padding()
@@ -263,24 +289,49 @@ private struct RewardsProgressSection: View {
 
 // Simple Reward Row with Progress
 // New Subview for displaying lists of claimed rewards
-/* Temporarily commented out entire struct definition
 private struct ClaimedRewardsList: View {
     let claims: [RewardClaim]
+    var onDelete: ((IndexSet) -> Void)? // Optional deletion handler
+
+    // Date formatter for the workaround
+    private var shortDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        return formatter
+    }
 
     var body: some View {
         VStack(alignment: .leading) {
             if claims.isEmpty {
                 Text("None")
-                    .font(Font.theme.body)
+                    .font(Font.theme.body) // Restore styling
                     .foregroundColor(Color.theme.textSecondary)
                     .padding(.vertical, 5)
             } else {
-                // Temporarily replace ForEach to test compilation
-                Text("Found \(claims.count) claim(s)")
+                ForEach(claims) { claim in
+                    VStack(alignment: .leading) {
+                         Text(claim.rewardTitle)
+                             .font(Font.theme.headline)
+                         HStack {
+                             Text("Status: \(claim.status.displayName)")
+                             Spacer()
+                             if claim.status == .promised, let date = claim.promisedDate {
+                                 Text("Promised: \(date.dateValue(), formatter: shortDateFormatter)")
+                             }
+                             if claim.status == .granted, let date = claim.grantedAt {
+                                  Text("Granted: \(date.dateValue(), formatter: shortDateFormatter)")
+                              }
+                         }
+                         // Modifiers removed from here for build stability
+                    }
+                    .padding(.vertical, 4)
+                }
+                .onDelete(perform: onDelete) // Use the passed-in handler
             }
         }
-        .padding([.leading, .bottom, .top]) // Indent list within DisclosureGroup
+        .padding([.leading, .bottom, .top]) // Restore padding
     }
 }
-*/
+// New Subview for displaying lists of claimed rewards
+// Commented out block removed
 // Removed duplicate definition of RewardProgressRow

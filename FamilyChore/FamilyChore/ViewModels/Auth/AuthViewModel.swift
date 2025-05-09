@@ -110,10 +110,11 @@ class AuthViewModel: ObservableObject {
             _ = try await FirebaseService.shared.login(email: email, password: password)
             // The auth state listener will automatically update currentUser and fetch userProfile
             print("Login successful.")
-            isLoading = false
+            isLoading = false // Correctly set on success
         } catch {
             self.error = error
             print("Error during login: \(error.localizedDescription)")
+            isLoading = false // Add this to reset loading state on error
         }
     }
 

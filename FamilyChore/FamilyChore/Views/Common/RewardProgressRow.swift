@@ -27,10 +27,16 @@ struct RewardProgressRow: View {
             HStack {
                 Text(reward.title).font(Font.theme.headline)
                 Spacer()
-                // Display current vs required points
-                Text("\(currentPoints) / \(reward.requiredPoints) pts")
-                    .font(Font.theme.caption1) // Adjusted font
-                    .foregroundColor(Color.theme.textSecondary)
+                // Display points text based on whether it's claimed
+                if claim != nil { // It's a claimed reward
+                    Text("\(reward.requiredPoints) / \(reward.requiredPoints) pts (Achieved)")
+                        .font(Font.theme.caption1) // Keep adjusted font
+                        .foregroundColor(Color.theme.textSecondary)
+                } else { // It's an unclaimed reward, show progress
+                    Text("\(currentPoints) / \(reward.requiredPoints) pts")
+                        .font(Font.theme.caption1) // Keep adjusted font
+                        .foregroundColor(Color.theme.textSecondary)
+                }
             } // End HStack
 
             // Show status text if claimed

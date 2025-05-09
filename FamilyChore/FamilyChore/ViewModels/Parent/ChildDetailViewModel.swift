@@ -124,4 +124,54 @@ class ChildDetailViewModel: ObservableObject {
           // Treat claimed items as 100% complete in terms of progress bar
           return 1.0
      }
+
+    // MARK: - Deletion
+    /// Deletes a specific reward claim.
+    /// - Parameter claim: The RewardClaim object to delete.
+    @MainActor
+    func deleteClaim(_ claim: RewardClaim) async {
+        guard let claimId = claim.id else {
+            errorMessage = "Cannot delete claim: Claim ID is missing."
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+        do {
+            try await firebaseService.deleteRewardClaim(claimId: claimId)
+            // Remove from local arrays to update UI immediately
+            rewardClaims.removeAll { $0.id == claimId }
+            // No need to manually update pendingClaims, promisedClaims, grantedClaims
+            // as they are computed properties based on rewardClaims.
+            print("Successfully deleted reward claim: \(claimId)")
+        } catch {
+            print("Error deleting reward claim \(claimId): \(error.localizedDescription)")
+            errorMessage = "Failed to delete claim: \(error.localizedDescription)"
+        }
+        isLoading = false
+    }
+
+    /// Deletes a specific task.
+    /// - Parameter task: The ChildTask object to delete.
+    @MainActor
+    func deleteTask(_ task: ChildTask) async {
+        guard let taskId = task.id else {
+            errorMessage = "Cannot delete task: Task ID is missing."
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+        do {
+            try await firebaseService.deleteTask(taskId: taskId)
+            // Remove from local arrays to update UI immediately
+            assignedTasks.removeAll { $0.id == taskId }
+            // pendingTasks and completedTasks are computed properties and will update.
+            print("Successfully deleted task: \(taskId)")
+        } catch {
+            print("Error deleting task \(taskId): \(error.localizedDescription)")
+            errorMessage = "Failed to delete task: \(error.localizedDescription)"
+        }
+        isLoading = false
+    }
 }

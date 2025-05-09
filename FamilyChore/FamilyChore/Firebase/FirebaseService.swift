@@ -841,6 +841,16 @@ class FirebaseService {
         // If the transaction completes without throwing, it was successful.
         print("Successfully claimed reward \(rewardId) for child \(childId) and created claim \(newClaimRef.documentID)")
     }
+    
+    /// Deletes a specific RewardClaim document from Firestore.
+        /// - Parameter claimId: The ID of the RewardClaim to delete.
+        /// - Throws: An error if the Firestore operation fails.
+        func deleteRewardClaim(claimId: String) async throws {
+            let claimRef = db.collection("rewardClaims").document(claimId) // Added self.
+            try await claimRef.delete()
+            print("Successfully deleted reward claim \(claimId)")
+        }
+    
     /// Updates specific fields on a RewardClaim document.
     /// - Parameters:
     ///   - claimId: The ID of the RewardClaim document to update.
